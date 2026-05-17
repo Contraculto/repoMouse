@@ -139,4 +139,4 @@ Both projects have seen little activity in recent years. repomouse aims to stay 
 
 ## License
 
-GPLv3. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
