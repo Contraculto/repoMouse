@@ -1,2 +1,11 @@
 repomouse-linux-amd64
 repomouse
+
+# Claude Code and AI tooling
+.claude/
+.cursor/
+.cursorignore
+.cursorules
+.aider*
+.copilot/
+*.aider
