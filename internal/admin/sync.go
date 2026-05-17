@@ -121,6 +121,10 @@ func initRepo(repoPath, exePath string) error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
+	// Set default branch to main regardless of git's global default.
+	if err := exec.Command("git", "-C", repoPath, "symbolic-ref", "HEAD", "refs/heads/main").Run(); err != nil {
+		return err
+	}
 	hookPath := filepath.Join(repoPath, "hooks", "pre-receive")
 	hook := fmt.Sprintf("#!/bin/sh\nexec %q pre-receive \"$REPOMOUSE_USER\"\n", exePath)
 	return os.WriteFile(hookPath, []byte(hook), 0755)
