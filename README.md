@@ -1,5 +1,7 @@
 # repomouse
 
+[![CI](https://github.com/Contraculto/repoMouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Contraculto/repoMouse/actions/workflows/ci.yml)
+
 Minimal self-hosted git hosting over system SSH. A couple of repos, a couple of users, no moving parts.
 
 ## How it works
