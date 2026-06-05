@@ -1,5 +1,27 @@
-repomouse-linux-amd64
+# Binary builds
 repomouse
+repomouse-linux-amd64
+repomouse-*
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Environment / secrets
+.env
+.env.*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # Claude Code and AI tooling
 .claude/
