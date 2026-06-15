@@ -133,3 +133,87 @@ func TestParse_invalidRules(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateName(t *testing.T) {
+	valid := []string{"alice", "bob_smith", "team-leads", "group.v2"}
+	for _, name := range valid {
+		t.Run("valid_"+name, func(t *testing.T) {
+			if err := ValidateName(name); err != nil {
+				t.Errorf("ValidateName(%q) = %v, want nil", name, err)
+			}
+		})
+	}
+
+	invalid := []string{"", "alice@host", "group/name", "user name", "user\"name", "user'name"}
+	for _, name := range invalid {
+		t.Run("invalid_"+name, func(t *testing.T) {
+			if err := ValidateName(name); err == nil {
+				t.Errorf("ValidateName(%q) = nil, want error", name)
+			}
+		})
+	}
+}
+
+func TestValidateSSHKey(t *testing.T) {
+	valid := []string{
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID alice@laptop",
+		"ssh-rsa AAAA... bob@desktop",
+		"ecdsa-sha2-nistp256 AAAA... carol@work",
+		"rsa-sha2-512 AAAA...",
+	}
+	for _, key := range valid {
+		t.Run("valid_"+strings.Fields(key)[0], func(t *testing.T) {
+			if err := ValidateSSHKey(key); err != nil {
+				t.Errorf("ValidateSSHKey(%q) = %v, want nil", key, err)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name string
+		key  string
+	}{
+		{"empty", ""},
+		{"newline", "ssh-ed25519 AAAA...\ncommand=\"sh\" ssh-rsa BBBB..."},
+		{"tab", "ssh-ed25519 AAAA...\talice"},
+		{"no_algorithm", "AAAA... alice"},
+		{"unknown_algorithm", "ssh-foobar AAAA... alice"},
+		{"single_field", "ssh-ed25519"},
+	}
+	for _, tt := range invalid {
+		t.Run("invalid_"+tt.name, func(t *testing.T) {
+			if err := ValidateSSHKey(tt.key); err == nil {
+				t.Errorf("ValidateSSHKey(%q) = nil, want error", tt.key)
+			}
+		})
+	}
+}
+
+func TestValidateRepoName(t *testing.T) {
+	valid := []string{"myrepo", "myrepo.git", "team/project", "my-cool_repo.v2"}
+	for _, name := range valid {
+		t.Run("valid_"+name, func(t *testing.T) {
+			if err := ValidateRepoName(name); err != nil {
+				t.Errorf("ValidateRepoName(%q) = %v, want nil", name, err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"../evil",
+		"foo/../bar",
+		"foo/./bar",
+		"/absolute/path",
+		"repo\x00name",
+		"repo:name",
+		"repo//name",
+	}
+	for _, name := range invalid {
+		t.Run("invalid_"+name, func(t *testing.T) {
+			if err := ValidateRepoName(name); err == nil {
+				t.Errorf("ValidateRepoName(%q) = nil, want error", name)
+			}
+		})
+	}
+}

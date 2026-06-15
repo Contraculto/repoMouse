@@ -14,6 +14,7 @@ const usage = `repomouse — minimal git hosting over system SSH
 Commands:
   setup --admin-user NAME --admin-key "ssh-..."   one-time server initialization
   sync                                             rebuild authorized_keys and ensure repos exist
+  repair-hooks                                     rewrite repo hooks to point to current binary
   shell <username>                                 handle a git SSH session (used in authorized_keys)
   pre-receive <username>                           pre-receive hook: enforce RW vs RW+ (force push)
 
@@ -43,6 +44,8 @@ func main() {
 		err = prereceive.Run(os.Args[2])
 	case "sync":
 		err = admin.Sync()
+	case "repair-hooks":
+		err = admin.RepairHooks()
 	case "setup":
 		err = admin.Setup(os.Args[2:])
 	default:

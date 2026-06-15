@@ -3,6 +3,7 @@ package prereceive
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,10 +18,20 @@ const zeroSHA = "0000000000000000000000000000000000000000"
 // It reads old/new/refname triplets from stdin and denies non-fast-forward
 // pushes (and ref deletions) unless the user has RW+ on the repo.
 func Run(username string) error {
+	if err := runChecks(username, os.Stdin); err != nil {
+		fmt.Fprintf(os.Stderr, "repomouse: %v\n", err)
+		os.Exit(1)
+	}
+	return nil
+}
+
+// runChecks performs the actual pre-receive validation and returns an error
+// when the push should be rejected. It is separated from Run so tests can
+// call it without terminating the process.
+func runChecks(username string, stdin io.Reader) error {
 	repoName := os.Getenv("REPOMOUSE_REPO")
 	if repoName == "" {
-		fmt.Fprintln(os.Stderr, "repomouse: REPOMOUSE_REPO not set — hook misconfigured")
-		os.Exit(1)
+		return fmt.Errorf("REPOMOUSE_REPO not set — hook misconfigured")
 	}
 
 	cachePath, err := config.CachePath()
@@ -32,7 +43,9 @@ func Run(username string) error {
 		return err
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+	repoPath := config.RepoPath(cfg.ReposDir, repoName)
+
+	scanner := bufio.NewScanner(stdin)
 	for scanner.Scan() {
 		parts := strings.Fields(scanner.Text())
 		if len(parts) != 3 {
@@ -44,15 +57,13 @@ func Run(username string) error {
 			continue // creating a new ref — always allowed for any writer
 		}
 
-		isForce := newSHA == zeroSHA || !isFastForward(oldSHA, newSHA)
+		isForce := newSHA == zeroSHA || !isFastForward(repoPath, oldSHA, newSHA)
 		if !isForce {
 			continue
 		}
 
 		if !access.Check(cfg, username, repoName, access.OpForce) {
-			fmt.Fprintf(os.Stderr, "repomouse: %s: force push to %s denied for %q\n",
-				repoName, refname, username)
-			os.Exit(1)
+			return fmt.Errorf("%s: force push to %s denied for %q", repoName, refname, username)
 		}
 	}
 	return scanner.Err()
@@ -60,6 +71,6 @@ func Run(username string) error {
 
 // isFastForward returns true if newSHA is a descendant of oldSHA.
 // git merge-base --is-ancestor exits 0 when true, non-zero when false.
-func isFastForward(oldSHA, newSHA string) bool {
-	return exec.Command("git", "merge-base", "--is-ancestor", oldSHA, newSHA).Run() == nil
+func isFastForward(repoPath, oldSHA, newSHA string) bool {
+	return exec.Command("git", "-C", repoPath, "merge-base", "--is-ancestor", oldSHA, newSHA).Run() == nil
 }

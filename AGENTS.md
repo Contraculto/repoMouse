@@ -25,7 +25,7 @@ go test ./...
 
 | Layer | Choice |
 |-------|--------|
-| Language | Go 1.23+ |
+| Language | Go 1.22+ |
 | Auth | OpenSSH authorized_keys with forced commands |
 | Config | YAML (managed via git push to admin repo) |
 | License | MIT |
@@ -38,9 +38,11 @@ go test ./...
 repoMouse/
 ├── cmd/repomouse/          # CLI entry point
 ├── internal/
-│   ├── config/             # YAML parsing
-│   ├── ssh/                # authorized_keys management
-│   └── git/                # git command wrappers
+│   ├── config/             # YAML parsing and validation
+│   ├── access/             # permission rule engine
+│   ├── shell/              # SSH forced-command hot path
+│   ├── prereceive/         # pre-receive hook for force-push checks
+│   └── admin/              # setup and sync (authorized_keys, repo creation)
 ├── go.mod, go.sum
 └── README.md
 ```
@@ -53,8 +55,10 @@ repoMouse/
 |------|---------|
 | Add a CLI command | `cmd/repomouse/main.go` |
 | Change config format | `internal/config/` |
-| Change SSH key handling | `internal/ssh/` |
-| Change git exec logic | `internal/git/` |
+| Change permission rules | `internal/access/` |
+| Change SSH forced-command flow | `internal/shell/` |
+| Change force-push enforcement | `internal/prereceive/` |
+| Change setup/sync behavior | `internal/admin/` |
 
 ---
 

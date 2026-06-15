@@ -86,6 +86,25 @@ func Parse(data []byte) (*Config, error) {
 		cfg.Groups = make(map[string][]string)
 	}
 
+	for username := range cfg.Users {
+		if err := ValidateName(username); err != nil {
+			return nil, fmt.Errorf("user %q: %w", username, err)
+		}
+	}
+	for groupName := range cfg.Groups {
+		if err := ValidateName(groupName); err != nil {
+			return nil, fmt.Errorf("group %q: %w", groupName, err)
+		}
+	}
+
+	for username, user := range cfg.Users {
+		for i, key := range user.Keys {
+			if err := ValidateSSHKey(key); err != nil {
+				return nil, fmt.Errorf("user %q key #%d: %w", username, i+1, err)
+			}
+		}
+	}
+
 	for name, r := range raw.Repos {
 		repo, err := parseRepo(name, r.Rules)
 		if err != nil {
@@ -160,6 +179,91 @@ func CachePath() (string, error) {
 // RepoPath returns the full filesystem path to a repo's bare git dir.
 func RepoPath(reposDir, name string) string {
 	return filepath.Join(reposDir, name+".git")
+}
+
+// ValidateName rejects user and group names that contain unsafe characters.
+// Allowed characters are letters, digits, '_', '-', and '.'.
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty name")
+	}
+	for _, r := range name {
+		if !isSafeNameRune(r) {
+			return fmt.Errorf("name %q contains invalid character %q", name, r)
+		}
+	}
+	return nil
+}
+
+func isSafeNameRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') ||
+		(r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		r == '_' || r == '-' || r == '.'
+}
+
+// ValidateRepoName rejects names that could escape repos_dir or are otherwise unsafe.
+// Safe names may contain letters, digits, '_', '-', '.', and '/' for namespacing,
+// but no path component may be "." or "..", and the name must not start with '/'.
+func ValidateRepoName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty repository name")
+	}
+	if strings.HasPrefix(name, "/") {
+		return fmt.Errorf("repository name %q must not start with '/'", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" {
+			return fmt.Errorf("repository name %q contains empty path component", name)
+		}
+		if part == "." || part == ".." {
+			return fmt.Errorf("repository name %q contains %q", name, part)
+		}
+		for _, r := range part {
+			if !isSafeRepoNameRune(r) {
+				return fmt.Errorf("repository name %q contains invalid character %q", name, r)
+			}
+		}
+	}
+	return nil
+}
+
+func isSafeRepoNameRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') ||
+		(r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		r == '_' || r == '-' || r == '.'
+}
+
+// ValidateSSHKey rejects key strings that could corrupt authorized_keys or are malformed.
+// It requires a single-line key starting with a recognized SSH public-key algorithm.
+func ValidateSSHKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("empty key")
+	}
+	if strings.ContainsAny(key, "\n\r\t") {
+		return fmt.Errorf("key contains forbidden whitespace")
+	}
+	fields := strings.Fields(key)
+	if len(fields) < 2 {
+		return fmt.Errorf("key must contain algorithm and data")
+	}
+	if !isKnownKeyAlgorithm(fields[0]) {
+		return fmt.Errorf("unknown key algorithm %q", fields[0])
+	}
+	return nil
+}
+
+func isKnownKeyAlgorithm(algo string) bool {
+	switch algo {
+	case "ssh-ed25519", "ssh-rsa",
+		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com",
+		"rsa-sha2-256", "rsa-sha2-512":
+		return true
+	}
+	return false
 }
 
 // ReadRaw extracts config.yaml from HEAD of the admin bare repo.

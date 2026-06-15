@@ -19,6 +19,8 @@ func Sync() error {
 		return err
 	}
 
+	fmt.Fprintln(os.Stderr, "repomouse: sync started")
+
 	data, cfg, err := config.Load(adminPath)
 	if err != nil {
 		return err
@@ -87,11 +89,11 @@ func rebuildAuthorizedKeys(cfg *config.Config, exePath string) error {
 			if key == "" {
 				continue
 			}
-			fmt.Fprintf(&sb,
-				"command=%q,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty %s\n",
-				exePath+" shell "+username,
-				key,
-			)
+		fmt.Fprintf(&sb,
+			"command=%q,restrict,no-pty %s\n",
+			exePath+" shell "+username,
+			key,
+		)
 		}
 	}
 
@@ -104,6 +106,9 @@ func ensureRepos(cfg *config.Config, exePath string) error {
 		return err
 	}
 	for name := range cfg.Repos {
+		if err := config.ValidateRepoName(name); err != nil {
+			return fmt.Errorf("invalid repo name in config: %w", err)
+		}
 		repoPath := config.RepoPath(cfg.ReposDir, name)
 		if _, err := os.Stat(repoPath); os.IsNotExist(err) {
 			if err := initRepo(repoPath, exePath); err != nil {
