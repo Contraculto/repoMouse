@@ -1,7 +1,8 @@
-# Binary builds
-repomouse
-repomouse-linux-amd64
-repomouse-*
+# Binary builds (repo root only — an unanchored "repomouse" would also match
+# the cmd/repomouse directory and silently ignore new source files there)
+/repomouse
+/repomouse-linux-*
+/repomouse.exe
 
 # Go
 *.exe

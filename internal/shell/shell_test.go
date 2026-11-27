@@ -10,9 +10,9 @@ import (
 )
 
 var parseCommandTests = []struct {
-	name    string
-	cmd     string
-	wantOp  access.Op
+	name     string
+	cmd      string
+	wantOp   access.Op
 	wantRepo string
 	wantArgv []string
 	wantErr  bool

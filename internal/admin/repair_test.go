@@ -2,6 +2,7 @@ package admin
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,5 +80,65 @@ repos:
 	}
 	if !strings.Contains(string(postData), fakeBin) {
 		t.Errorf("post-receive hook not updated to %q: %s", fakeBin, postData)
+	}
+}
+
+func TestRepairHooks_regeneratesMissingCache(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	reposDir := filepath.Join(home, "repos")
+	t.Setenv("HOME", home)
+
+	adminPath := filepath.Join(reposDir, "admin.git")
+	if err := os.MkdirAll(reposDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "--bare", adminPath).Run(); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := `
+server:
+  repos_dir: ` + reposDir + `
+users:
+  alice:
+    admin: true
+    keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID alice@laptop"
+repos:
+  myrepo:
+    rules:
+      - "RW+ = alice"
+`
+	if err := commitInitialConfig(adminPath, cfgYAML); err != nil {
+		t.Fatalf("commitInitialConfig: %v", err)
+	}
+
+	// No ~/.repomouse/config.yaml: repair-hooks must rebuild it from the admin
+	// repo instead of failing, since it is the recovery tool after a move.
+	repoPath := filepath.Join(reposDir, "myrepo.git")
+	if err := ensureRepos(mustParse(t, cfgYAML), "/old/repomouse"); err != nil {
+		t.Fatalf("ensureRepos: %v", err)
+	}
+
+	fakeBin := filepath.Join(home, "bin", "repomouse")
+	origExec := executablePath
+	executablePath = func() (string, error) { return fakeBin, nil }
+	defer func() { executablePath = origExec }()
+
+	if err := RepairHooks(); err != nil {
+		t.Fatalf("RepairHooks with missing cache: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".repomouse", "config.yaml")); err != nil {
+		t.Errorf("cache was not regenerated: %v", err)
+	}
+	hook, err := os.ReadFile(filepath.Join(repoPath, "hooks", "pre-receive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hook), fakeBin) {
+		t.Errorf("hook not repaired: %s", hook)
 	}
 }

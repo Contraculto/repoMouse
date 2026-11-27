@@ -2,6 +2,10 @@ package access
 
 import "contraculto.com/repomouse/internal/config"
 
+// AdminRepo is the repo that holds config.yaml. It is not listed in the config
+// itself — access is granted only to users with admin: true.
+const AdminRepo = config.AdminRepoName
+
 // Op is a git operation type.
 type Op int
 
@@ -26,6 +30,18 @@ func Check(cfg *config.Config, username, repoName string, op Op) bool {
 		}
 	}
 	return false
+}
+
+// CheckRepo is Check, with the admin repo handled as a special case: it is not
+// listed in the config, so it is allowed only for users with admin: true.
+// Both the SSH hot path and the pre-receive hook use this, so admins keep
+// force-push rights on the admin repo.
+func CheckRepo(cfg *config.Config, username, repoName string, op Op) bool {
+	if repoName == AdminRepo {
+		u, ok := cfg.Users[username]
+		return ok && u.Admin
+	}
+	return Check(cfg, username, repoName, op)
 }
 
 func permAllows(perm config.Permission, op Op) bool {

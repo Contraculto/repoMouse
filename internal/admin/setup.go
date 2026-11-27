@@ -37,25 +37,21 @@ func Setup(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(adminPath), 0750); err != nil {
 		return fmt.Errorf("creating repos dir: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "repomouse: created %s\n", filepath.Dir(adminPath))
+	fmt.Fprintf(os.Stderr, "repoMouse: created %s\n", filepath.Dir(adminPath))
 
 	if err := exec.Command("git", "init", "--bare", adminPath).Run(); err != nil {
 		return fmt.Errorf("initializing admin repo: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "repomouse: initialized admin repo at %s\n", adminPath)
+	fmt.Fprintf(os.Stderr, "repoMouse: initialized admin repo at %s\n", adminPath)
 
-	exePath, err := os.Executable()
+	exePath, err := binaryPath()
 	if err != nil {
 		return err
-	}
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
-		exePath = resolved
 	}
 
 	// post-receive hook: runs sync on every push to admin
 	hookPath := filepath.Join(adminPath, "hooks", "post-receive")
-	hook := fmt.Sprintf("#!/bin/sh\nexec %q sync\n", exePath)
-	if err := os.WriteFile(hookPath, []byte(hook), 0755); err != nil {
+	if err := writeFileAtomic(hookPath, []byte(buildPostReceiveHook(exePath)), 0755); err != nil {
 		return fmt.Errorf("installing post-receive hook: %w", err)
 	}
 
@@ -63,17 +59,17 @@ func Setup(args []string) error {
 	if err := commitInitialConfig(adminPath, initialConfig); err != nil {
 		return fmt.Errorf("committing initial config: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "repomouse: committed initial config.yaml")
+	fmt.Fprintln(os.Stderr, "repoMouse: committed initial config.yaml")
 
 	if err := Sync(); err != nil {
 		return fmt.Errorf("initial sync: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, `
-repomouse: setup complete!
+repoMouse: setup complete!
 
 Clone the admin repo to manage users, groups, and repositories:
-  git clone git@<your-host>:admin
+  git clone mouse@<your-host>:admin
 
 Edit config.yaml and push to apply changes immediately.
 `)
@@ -82,7 +78,7 @@ Edit config.yaml and push to apply changes immediately.
 
 func buildInitialConfig(adminUser, adminKey string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# repomouse config\n")
+	fmt.Fprintf(&sb, "# repoMouse config\n")
 	fmt.Fprintf(&sb, "# Edit and push to apply changes.\n\n")
 	fmt.Fprintf(&sb, "users:\n")
 	fmt.Fprintf(&sb, "  %s:\n", adminUser)
@@ -122,7 +118,7 @@ func commitInitialConfig(adminPath, configYAML string) error {
 	steps := [][]string{
 		{"git", "init"},
 		{"git", "config", "user.email", "repomouse@localhost"},
-		{"git", "config", "user.name", "repomouse"},
+		{"git", "config", "user.name", "repoMouse"},
 		{"git", "add", "config.yaml"},
 		{"git", "commit", "-m", "initial config"},
 		{"git", "push", adminPath, "HEAD:main"},

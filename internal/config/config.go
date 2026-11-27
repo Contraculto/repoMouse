@@ -15,10 +15,10 @@ type Permission int
 
 const (
 	PermUnknown Permission = iota
-	PermDeny              // -
-	PermRead              // R
-	PermWrite             // RW
-	PermForce             // RW+
+	PermDeny               // -
+	PermRead               // R
+	PermWrite              // RW
+	PermForce              // RW+
 )
 
 // Rule is a parsed access rule.
@@ -50,12 +50,16 @@ type rawConfig struct {
 	Server struct {
 		ReposDir string `yaml:"repos_dir"`
 	} `yaml:"server"`
-	Users  map[string]User         `yaml:"users"`
-	Groups map[string][]string     `yaml:"groups"`
+	Users  map[string]User     `yaml:"users"`
+	Groups map[string][]string `yaml:"groups"`
 	Repos  map[string]struct {
 		Rules []string `yaml:"rules"`
 	} `yaml:"repos"`
 }
+
+// AdminRepoName is the repo that holds config.yaml. It is reserved: declaring it
+// under repos is an error, and access is granted only to users with admin: true.
+const AdminRepoName = "admin"
 
 // Parse parses raw YAML config bytes into a Config.
 func Parse(data []byte) (*Config, error) {
@@ -71,6 +75,13 @@ func Parse(data []byte) (*Config, error) {
 			return nil, err
 		}
 		reposDir = filepath.Join(home, "repos")
+	}
+	// Repo paths are handed to git as arguments and are resolved from different
+	// working directories (SSH sessions, repo hooks), so a relative path would
+	// mean different things in different places. Requiring an absolute path also
+	// keeps a repo name like "-x" from ever being mistaken for a flag.
+	if !filepath.IsAbs(reposDir) {
+		return nil, fmt.Errorf("server.repos_dir %q must be an absolute path", reposDir)
 	}
 
 	cfg := &Config{
@@ -106,6 +117,12 @@ func Parse(data []byte) (*Config, error) {
 	}
 
 	for name, r := range raw.Repos {
+		if err := ValidateRepoName(name); err != nil {
+			return nil, fmt.Errorf("repo %q: %w", name, err)
+		}
+		if name == AdminRepoName {
+			return nil, fmt.Errorf("repo %q: name is reserved for the config repo; use admin: true on a user instead", name)
+		}
 		repo, err := parseRepo(name, r.Rules)
 		if err != nil {
 			return nil, err
@@ -174,6 +191,64 @@ func CachePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".repomouse", "config.yaml"), nil
+}
+
+// WriteCache atomically writes the raw config YAML to cachePath, so a crash or
+// a full disk cannot leave a half-written config behind.
+func WriteCache(cachePath string, data []byte) error {
+	dir := filepath.Dir(cachePath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // no-op once the rename succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, cachePath)
+}
+
+// LoadCached returns the config, preferring the cache written by sync and
+// falling back to the admin repo (rebuilding the cache) when the cache is
+// missing or unreadable. A deleted cache must not lock everyone out until an
+// admin logs in server-side.
+func LoadCached() (*Config, error) {
+	cachePath, err := CachePath()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := LoadCache(cachePath)
+	if err == nil {
+		return cfg, nil
+	}
+	cacheErr := err
+
+	adminPath, err := AdminRepoPath()
+	if err != nil {
+		return nil, fmt.Errorf("config cache unreadable and admin repo path unavailable: %w", cacheErr)
+	}
+	data, cfg, err := Load(adminPath)
+	if err != nil {
+		return nil, fmt.Errorf("config cache unreadable and admin repo unavailable: %w", err)
+	}
+	if err := WriteCache(cachePath, data); err != nil {
+		return nil, err
+	}
+	fmt.Fprintln(os.Stderr, "repoMouse: regenerated config cache from admin repo")
+	return cfg, nil
 }
 
 // RepoPath returns the full filesystem path to a repo's bare git dir.

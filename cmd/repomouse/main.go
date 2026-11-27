@@ -9,18 +9,18 @@ import (
 	"contraculto.com/repomouse/internal/shell"
 )
 
-const usage = `repomouse — minimal git hosting over system SSH
+const usage = `repoMouse - Mini mousey GIT repos for everymouse
 
 Commands:
   setup --admin-user NAME --admin-key "ssh-..."   one-time server initialization
-  sync                                             rebuild authorized_keys and ensure repos exist
-  repair-hooks                                     rewrite repo hooks to point to current binary
-  shell <username>                                 handle a git SSH session (used in authorized_keys)
-  pre-receive <username>                           pre-receive hook: enforce RW vs RW+ (force push)
+  sync                                            rebuild authorized_keys and ensure repos exist
+  repair-hooks                                    rewrite repo hooks to point to current binary
+  shell <username>                                handle a git SSH session (used in authorized_keys)
+  pre-receive <username>                          pre-receive hook: enforce RW vs RW+ (force push)
 
 Typical flow:
-  1. sudo -u git repomouse setup --admin-user alice --admin-key "ssh-ed25519 AAAA..."
-  2. git clone git@yourhost:admin
+  1. sudo -u mouse repomouse setup --admin-user alice --admin-key "ssh-ed25519 AAAA..."
+  2. git clone mouse@yourhost:admin
   3. edit config.yaml, git push  →  sync runs automatically via post-receive hook
 `
 
@@ -32,6 +32,9 @@ func main() {
 
 	var err error
 	switch os.Args[1] {
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+		return
 	case "shell":
 		if len(os.Args) < 3 {
 			fatalf("shell: missing username")
@@ -49,17 +52,17 @@ func main() {
 	case "setup":
 		err = admin.Setup(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "repomouse: unknown command %q\n\n%s", os.Args[1], usage)
+		fmt.Fprintf(os.Stderr, "repoMouse: unknown command %q\n\n%s", os.Args[1], usage)
 		os.Exit(1)
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "repomouse: %v\n", err)
+		fmt.Fprintf(os.Stderr, "repoMouse: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "repomouse: "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "repoMouse: "+format+"\n", args...)
 	os.Exit(1)
 }

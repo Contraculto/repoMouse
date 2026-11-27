@@ -12,6 +12,7 @@ import (
 // makeRepo creates a temp bare repo named "myrepo.git" with two branches:
 //   - main at commit A
 //   - topic at commit B, where B is a fast-forward from A
+//
 // It returns the repo path, the SHA of A, and the SHA of B.
 func makeRepo(t *testing.T) (repoPath, mainSHA, topicSHA string) {
 	t.Helper()
@@ -76,6 +77,12 @@ func makeRepo(t *testing.T) (repoPath, mainSHA, topicSHA string) {
 
 func writeCache(t *testing.T, home, reposDir string) {
 	t.Helper()
+	writeCacheAdmin(t, home, reposDir, "false")
+}
+
+// writeCacheAdmin is writeCache with alice's admin flag configurable.
+func writeCacheAdmin(t *testing.T, home, reposDir, aliceAdmin string) {
+	t.Helper()
 	cacheDir := filepath.Join(home, ".repomouse")
 	if err := os.MkdirAll(cacheDir, 0750); err != nil {
 		t.Fatal(err)
@@ -85,7 +92,7 @@ server:
   repos_dir: ` + reposDir + `
 users:
   alice:
-    admin: false
+    admin: ` + aliceAdmin + `
     keys:
       - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID alice@laptop"
   bob:
@@ -174,5 +181,60 @@ func TestRunChecks_newRefAllowed(t *testing.T) {
 	// Creating a new ref with oldSHA=zero is always allowed for writers.
 	if err := runChecks("bob", feed(zeroSHA, topicSHA, "refs/heads/new")); err != nil {
 		t.Fatalf("new ref should be allowed: %v", err)
+	}
+}
+
+func TestRunChecks_adminRepoForcePushAllowedForAdmin(t *testing.T) {
+	repoPath, mainSHA, topicSHA := makeRepo(t)
+	home := t.TempDir()
+	writeCacheAdmin(t, home, filepath.Dir(repoPath), "true")
+	t.Setenv("HOME", home)
+	t.Setenv("REPOMOUSE_REPO", "admin")
+
+	// The admin repo is not listed in config; admins get implicit RW+ on it,
+	// including in the pre-receive hook that repair-hooks installs there.
+	if err := runChecks("alice", feed(topicSHA, mainSHA, "refs/heads/main")); err != nil {
+		t.Fatalf("admin force push on admin repo should be allowed: %v", err)
+	}
+}
+
+func TestRunChecks_adminRepoDeniedForNonAdmin(t *testing.T) {
+	_, mainSHA, topicSHA := makeRepo(t)
+	home := t.TempDir()
+	writeCache(t, home, "/tmp/does-not-matter")
+	t.Setenv("HOME", home)
+	t.Setenv("REPOMOUSE_REPO", "admin")
+
+	if err := runChecks("bob", feed(mainSHA, topicSHA, "refs/heads/main")); err == nil {
+		t.Fatal("non-admin should be denied on the admin repo")
+	}
+}
+
+func TestRunChecks_rejectsMalformedRefUpdates(t *testing.T) {
+	home := t.TempDir()
+	writeCache(t, home, "/tmp/does-not-matter")
+	t.Setenv("HOME", home)
+	t.Setenv("REPOMOUSE_REPO", "myrepo")
+
+	for _, c := range []struct{ old, new, ref string }{
+		{"HEAD", strings.Repeat("a", 40), "refs/heads/main"},
+		{strings.Repeat("a", 40), "refs/heads/x", "refs/heads/main"},
+		{strings.Repeat("a", 40), strings.Repeat("z", 40), "refs/heads/main"},
+		{"$(id)", strings.Repeat("a", 40), "refs/heads/main"},
+	} {
+		if err := runChecks("bob", feed(c.old, c.new, c.ref)); err == nil {
+			t.Errorf("malformed update %q %q should be rejected", c.old, c.new)
+		}
+	}
+}
+
+func TestRunChecks_rejectsUnsafeRepoEnv(t *testing.T) {
+	home := t.TempDir()
+	writeCache(t, home, "/tmp/does-not-matter")
+	t.Setenv("HOME", home)
+	t.Setenv("REPOMOUSE_REPO", "../../etc")
+
+	if err := runChecks("bob", feed(zeroSHA, strings.Repeat("a", 40), "refs/heads/main")); err == nil {
+		t.Fatal("path traversal in REPOMOUSE_REPO should be rejected")
 	}
 }

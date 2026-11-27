@@ -17,11 +17,11 @@ The traditional way to lock this down (gitolite's approach, which repomouse copi
 So repomouse's `authorized_keys` looks like:
 
 ```
-command="/usr/local/bin/repomouse shell alice",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA...
-command="/usr/local/bin/repomouse shell bob",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA...
+command="/usr/local/bin/repomouse shell alice",restrict,no-pty ssh-ed25519 AAAA... repoMouse:alice
+command="/usr/local/bin/repomouse shell bob",restrict,no-pty ssh-ed25519 AAAA... repoMouse:bob
 ```
 
-One line per key, per user. The options after `command=` strip every other SSH capability — no port forwarding, no terminal, no agent. The connection can only be used to run the forced command.
+One line per key, per user. `restrict` (OpenSSH 7.2+) disables every other SSH capability — port forwarding, agent forwarding, X11, pty — so the connection can only be used to run the forced command; `no-pty` is kept as an explicit reminder.
 
 When alice pushes, OpenSSH matches her key, runs `repomouse shell alice`, and puts her actual request (`git-receive-pack 'myrepo.git'`) in `SSH_ORIGINAL_COMMAND`. repomouse checks if alice can write to myrepo, then `exec`s `git-receive-pack` — replacing itself with git in the same process.
 
@@ -40,6 +40,7 @@ repomouse/
     admin/
       setup.go                   one-time initialization
       sync.go                    rebuild authorized_keys, create repos
+      repair.go                  repoint repo hooks after a binary move
 ```
 
 ---
@@ -48,11 +49,12 @@ repomouse/
 
 Pure dispatch. Reads `os.Args[1]` and calls into the right package. No logic here — it just maps subcommands to functions and exits on error.
 
-Four subcommands:
+Five subcommands:
 - `shell` — runs on every git operation (the hot path)
 - `pre-receive` — runs inside a repo during push (the hook)
 - `sync` — admin operation: rebuild authorized_keys and create repos
 - `setup` — one-time initialization
+- `repair-hooks` — repoint repo hooks at the current binary path after a move
 
 ---
 
@@ -74,6 +76,8 @@ Config
 **Permissions** are an enum: `PermDeny (-) < PermRead (R) < PermWrite (RW) < PermForce (RW+)`.
 
 **Rules** are stored as `"RW+ = alice @devs"` in YAML. `Parse()` splits on `=`, reads the permission token on the left, splits the right side into individual principals (usernames or `@groups`). Parsing fails fast on unknown permissions, missing `=`, or empty principals — config errors should be loud.
+
+Names and paths are validated in the same pass: usernames and groups are restricted to `[A-Za-z0-9._-]`, SSH keys must be single-line with a known algorithm, repo names may not contain `..` or absolute paths, `section.repos_dir` must be absolute (repo paths reach `git` as arguments), and `admin` is rejected as a repo name because that repo is reserved for the config.
 
 **Two loading paths:**
 - `Load(adminRepoPath)` — reads `config.yaml` from the bare admin repo using `git show HEAD:config.yaml`. Used by `sync`.
@@ -185,11 +189,11 @@ exec repomouse sync
 1. Shell out to `git -C /home/mouse/repos/admin.git show HEAD:config.yaml` to get the raw YAML bytes.
 2. Parse them to validate — if the config is broken, fail loudly before touching anything.
 3. Write the raw bytes to `~/.repomouse/config.yaml` (the cache). This is what `shell` and `pre-receive` read on every connection.
-4. Rebuild `~/.ssh/authorized_keys`. Iterate all users sorted alphabetically (for deterministic diffs), generate one line per key with `command="repomouse shell <username>"` and all the restriction options.
+4. Rebuild `~/.ssh/authorized_keys`. Iterate all users sorted alphabetically (for deterministic diffs), generate one line per key with `command="<exe> shell <username>"`, `restrict,no-pty`, and a trailing `repoMouse:<username>` tag in the key's comment field. Only lines repoMouse wrote are replaced — the tag identifies them (older, untagged lines are recognized by their forced command pointing at the `repomouse` binary), everything else in the file is preserved verbatim.
 5. Resolve `os.Executable()` and `filepath.EvalSymlinks()` to get the real binary path — important if repomouse is symlinked from `/usr/local/bin`.
-6. Walk all repos in config. For each one that doesn't exist on disk, call `git init --bare` then `git symbolic-ref HEAD refs/heads/main` (so new clones default to the main branch), then install the `pre-receive` hook.
+6. Walk all repos in config. For each one that doesn't exist on disk, call `git init --bare` then `git symbolic-ref HEAD refs/heads/main` (so new clones default to the main branch), then install the `pre-receive` hook with an atomic rename.
 
-The key property: **sync is idempotent**. Running it twice changes nothing. Existing repos are not touched. authorized_keys is rewritten atomically (`os.WriteFile` is a single write). This means if something goes wrong mid-sync, the worst case is an inconsistent authorized_keys that gets fixed on the next sync.
+The key property: **sync is idempotent**. Running it twice changes nothing. Existing repos are not touched, and unmanaged `authorized_keys` lines survive every run. The file is written to a temp file in `~/.ssh` and renamed into place, so a crash cannot leave a truncated `authorized_keys` (which would lock everyone out).
 
 ---
 
@@ -205,6 +209,12 @@ One-time initialization. Takes `--admin-user` and `--admin-key` flags.
 6. Call `Sync()` directly — this writes the cache, writes authorized_keys with the first key, and leaves the system in a fully operational state.
 
 After setup, the admin user can immediately `git clone mouse@host:admin` and start editing config.
+
+---
+
+### `internal/admin/repair.go`
+
+`repair-hooks` rewrites the `pre-receive` and `post-receive` hooks in every bare repo under `repos_dir` (including `admin.git`) so they point at the current binary path. Run it after moving or renaming the binary — otherwise the hooks `exec` a path that no longer exists and every push fails. Only files that look like repoMouse hooks (shebang plus an `exec ... repomouse` line) are touched, so hand-written hooks are left alone.
 
 ---
 

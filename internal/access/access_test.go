@@ -35,11 +35,11 @@ func makeConfig() *config.Config {
 }
 
 var checkTests = []struct {
-	name   string
-	user   string
-	repo   string
-	op     Op
-	want   bool
+	name string
+	user string
+	repo string
+	op   Op
+	want bool
 }{
 	// alice has RW+ on proj
 	{"alice read proj", "alice", "proj", OpRead, true},
@@ -123,5 +123,38 @@ func TestCheck_firstMatchWins(t *testing.T) {
 	}
 	if Check(cfg, "alice", "r", OpRead) {
 		t.Error("alice should be denied by first rule")
+	}
+}
+
+func TestCheckRepo_adminRepo(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+users:
+  alice:
+    admin: true
+  bob:
+    admin: false
+repos:
+  proj:
+    rules:
+      - "RW+ = @all"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The admin repo is not listed in config; only admin: true users get in.
+	if !CheckRepo(cfg, "alice", AdminRepo, OpForce) {
+		t.Error("admin should have RW+ on the admin repo")
+	}
+	if CheckRepo(cfg, "bob", AdminRepo, OpRead) {
+		t.Error("non-admin should have no access to the admin repo")
+	}
+	if CheckRepo(cfg, "ghost", AdminRepo, OpRead) {
+		t.Error("unknown user should have no access to the admin repo")
+	}
+
+	// Everything else goes through normal rule evaluation.
+	if !CheckRepo(cfg, "bob", "proj", OpWrite) {
+		t.Error("bob should have RW on proj via @all")
 	}
 }

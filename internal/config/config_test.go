@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -215,5 +217,88 @@ func TestValidateRepoName(t *testing.T) {
 				t.Errorf("ValidateRepoName(%q) = nil, want error", name)
 			}
 		})
+	}
+}
+
+func TestLoadCached_missingCacheAndAdminRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if _, err := LoadCached(); err == nil {
+		t.Fatal("expected an error when neither the cache nor the admin repo exists")
+	}
+}
+
+func TestWriteCache_atomicAndPrivate(t *testing.T) {
+	home := t.TempDir()
+	cachePath := filepath.Join(home, ".repomouse", "config.yaml")
+
+	if err := WriteCache(cachePath, []byte("users:\n  alice:\n    admin: true\n")); err != nil {
+		t.Fatalf("WriteCache: %v", err)
+	}
+	info, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("cache mode = %o, want 600", perm)
+	}
+	entries, err := os.ReadDir(filepath.Dir(cachePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("leftover temp files in cache dir: %v", names)
+	}
+}
+
+func TestParse_rejectsUnsafeRepoName(t *testing.T) {
+	for _, name := range []string{"../escape", "a/../../b", "/abs", "", "a b"} {
+		yaml := "repos:\n  \"" + name + "\":\n    rules:\n      - \"R = @all\"\n"
+		if _, err := Parse([]byte(yaml)); err == nil {
+			t.Errorf("repo name %q should be rejected", name)
+		}
+	}
+}
+
+func TestParse_rejectsReservedAdminRepo(t *testing.T) {
+	yaml := `
+users:
+  alice:
+    admin: true
+repos:
+  admin:
+    rules:
+      - "R = @all"
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("declaring the admin repo in config should fail")
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestParse_rejectsRelativeReposDir(t *testing.T) {
+	_, err := Parse([]byte("server:\n  repos_dir: relative/repos\n"))
+	if err == nil {
+		t.Fatal("a relative repos_dir should be rejected")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// The default and absolute paths are fine.
+	cfg, err := Parse([]byte("server:\n  repos_dir: /srv/repos\n"))
+	if err != nil {
+		t.Fatalf("absolute repos_dir rejected: %v", err)
+	}
+	if cfg.ReposDir != "/srv/repos" {
+		t.Errorf("repos_dir = %q, want /srv/repos", cfg.ReposDir)
 	}
 }

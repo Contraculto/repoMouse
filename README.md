@@ -1,14 +1,18 @@
-# repomouse
+# repoMouse
+
+Mini mousey GIT repos for everymouse.
 
 [![CI](https://github.com/Contraculto/repoMouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Contraculto/repoMouse/actions/workflows/ci.yml)
 
-Minimal self-hosted git hosting over system SSH. A couple of repos, a couple of users, no moving parts.
+A minimal self-hosted Git server. Allows you to keep several repos on your own server with multi user access using SSH public keys. A single binary, the only dependencies are openssh server and git.
+
+You can have multiple users or groups with different levels of permission to each of your repos, with all the configuration done by pushing a single yaml configuration file to the admin repository.
+
+`sync` only manages the `authorized_keys` lines it wrote (tagged `repoMouse:<user>`), so a personal login key on the same account keeps working.
 
 ## How it works
 
-repomouse uses OpenSSH for authentication — no built-in SSH server to audit or patch. Each user's public key is written into a system user's `authorized_keys` with a forced command (`repomouse shell <username>`). When you `git push`, OpenSSH handles the connection, repomouse checks permissions against the config, then hands off to the real git command.
-
-Configuration lives in a git repository (`admin`) on the server itself. Push a change to `admin` → a post-receive hook rebuilds `authorized_keys` and creates any new repos. No server restarts, no files to hand-edit on the server.
+repoMouse uses OpenSSH for authentication — no built-in SSH server to audit or patch. Each user's public key is written into a system user's `authorized_keys` with a forced command (`repomouse shell <username>`). When you `git push`, OpenSSH handles the connection, repomouse checks permissions against the config, then hands off to the real git command.
 
 ```
 you                     server (OpenSSH)           repomouse
@@ -20,30 +24,24 @@ you                     server (OpenSSH)           repomouse
  |                            | <----- git protocol -- |
 ```
 
-## Features
-
-- No daemon — each git operation is a fresh SSH process
-- Single static binary, only runtime dependency is `git`
-- Config managed via git push to an `admin` repo
-- `R` / `RW` / `RW+` permissions per repo, with groups and `@all`
-- Force-push and ref-delete controlled separately from regular push
-- Repos created automatically when added to config
-
 ## Installation
 
 ### Requirements
 
 - Linux server with `openssh-server` and `git`
 - Go 1.22+ to build from source
-- A system user to own the repos (conventionally `mouse` or `git`)
+- A system user to own the repos (conventionally `mouse`)
 
 ### Build and deploy
 
+Use the deploy script — it builds a static binary, copies it to the server and
+verifies it runs:
+
 ```bash
-DEPLOY_HOST=yourserver.com ./deploy.sh
+DEPLOY_HOST=yourserver.com ./deploy.sh          # DEPLOY_USER, DEPLOY_PATH are optional
 ```
 
-Or manually:
+Or build manually:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o repomouse ./cmd/repomouse
@@ -55,21 +53,12 @@ scp repomouse root@yourserver.com:/usr/local/bin/repomouse
 ```bash
 # on the server, as root
 useradd -m -s /bin/bash mouse
-repomouse setup --admin-user yourname --admin-key "ssh-ed25519 AAAA..."
+
+# as the repo-owning user — setup writes ~/repos and ~/.ssh for that user
+sudo -u mouse repomouse setup --admin-user yourname --admin-key "ssh-ed25519 AAAA..."
 ```
 
 This initializes `~/repos/admin.git` with a starter `config.yaml`, installs the post-receive hook, and writes the first `authorized_keys`. Output tells you where to go next.
-
-### SSH client (optional convenience)
-
-Add to `~/.ssh/config` on your local machine:
-
-```
-Host yourserver.com
-    User mouse
-```
-
-Then `git clone yourserver.com:reponame` works. Without it, use the full form: `git clone mouse@yourserver.com:reponame`.
 
 ## Configuration
 
@@ -83,6 +72,10 @@ git push   # changes apply immediately via post-receive hook
 ```
 
 ### config.yaml
+
+`server.repos_dir` must be an absolute path (defaults to `$HOME/repos`). Repo
+names are validated — no `..`, no absolute paths — and `admin` is reserved for
+the config repo.
 
 ```yaml
 # optional — defaults to $HOME/repos
@@ -119,7 +112,9 @@ Rules are checked top-to-bottom. The first rule that matches the user wins. If n
 | `R`   |  ✓   |      |                         |
 | `RW`  |  ✓   |  ✓   |                         |
 | `RW+` |  ✓   |  ✓   |  ✓                      |
-| `-`   | explicit deny on first match  |
+| `-`   |      |      |                         |
+
+A `-` rule explicitly denies the principal and stops rule evaluation for them.
 
 Principals can be a username, a `@group` name, or `@all`.
 
@@ -127,17 +122,32 @@ Principals can be a username, a `@group` name, or `@all`.
 
 Users with `admin: true` have implicit `RW+` on the `admin` repo. All other repos still require explicit rules.
 
+### managed keys
+
+`sync` owns only the `authorized_keys` lines it wrote — they end with a
+`repoMouse:<username>` tag. Any other line in that file (your own login key,
+keys for other tools) is left alone, so repoMouse can share the account. The
+file is replaced atomically, so a crash cannot leave a truncated
+`authorized_keys`.
+
+## Commands
+
+```
+repomouse setup --admin-user NAME --admin-key "ssh-..."   one-time server initialization
+repomouse sync                                            rebuild authorized_keys and ensure repos exist
+repomouse repair-hooks                                    repoint repo hooks at the current binary
+repomouse shell <username>                                handle a git SSH session (used in authorized_keys)
+repomouse pre-receive <username>                          pre-receive hook: enforce RW vs RW+ (force push)
+```
+
+`sync` runs automatically on every push to the `admin` repo. Run `repair-hooks`
+after moving the binary to a different path.
+
 ## Inspiration
 
-repomouse started from frustration with the gap between "too simple" (bare git + manual authorized_keys) and "too much" (Gitea, GitLab) for a use case that's really just a couple of repos and a handful of trusted users.
+repoMouse aims to serve a specific type of user trapped between just a bare git repo and installing a heavy solution like Gitea, it borrows heavily from [gitolite](https://github.com/sitaramc/gitolite) by Sitaram Chamarty, the original as far as I know and [gitdir](https://github.com/belak/gitdir) by Kaleb Elwert, which is a modern Go approach to the same problem.
 
-Two projects shaped its design directly:
-
-**[gitolite](https://github.com/sitaramc/gitolite)** by Sitaram Chamarty — the gold standard for SSH git hosting. repomouse borrows its permission model (`R`/`RW`/`RW+`), group syntax (`@group`, `@all`), and admin-repo-as-config approach directly from gitolite. Gitolite is mature, featureful, and battle-tested across many large deployments; repomouse is a deliberately narrow subset of what it can do, without the Perl dependency.
-
-**[gitdir](https://github.com/belak/gitdir)** by Kaleb Elwert — a Go reimplementation of gitolite-style hosting. repomouse takes its single-binary goal and YAML config aesthetic from gitdir, but opts for system SSH over a built-in SSH server to reduce the security surface.
-
-Both projects have seen little activity in recent years. repomouse aims to stay current with modern Go and remain small enough to be fully understood and maintained by its users.
+This version is a simplified mix of ideas taken mostly from both of those and some other projects to cover the simplest use-case which is exactly what I need.
 
 ## License
 
