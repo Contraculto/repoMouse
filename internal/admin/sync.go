@@ -135,7 +135,8 @@ func unmanagedLines(path, exePath string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "# managed by repoMouse") {
+		// Case-insensitive: older versions wrote "# managed by repomouse".
+		if strings.HasPrefix(strings.ToLower(line), "# managed by repomouse") {
 			continue
 		}
 		if isManagedLine(line, exePath) {

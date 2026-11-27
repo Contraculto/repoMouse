@@ -6,6 +6,15 @@ All notable changes to repoMouse are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-27
+
+### Fixed
+
+- The pre-1.1.0 `authorized_keys` header (`# managed by repomouse`, lowercase
+  `m`) was not recognized as ours and got preserved at the bottom of the file on
+  the first sync after upgrading. Header detection is now case-insensitive and
+  the stale line is removed.
+
 ## [1.1.0] - 2026-11-27
 
 First tagged release: the 1.0 line was the initial implementation, this release

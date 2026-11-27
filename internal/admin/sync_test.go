@@ -269,7 +269,7 @@ func TestRebuildAuthorizedKeys_preservesUnmanagedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	existing := strings.Join([]string{
-		"# managed by repoMouse — do not edit manually",
+		"# managed by repomouse — do not edit manually", // legacy lowercase header
 		`command="/usr/local/bin/repomouse shell alice",restrict,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID alice@old repoMouse:alice`,
 		`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID admin@laptop`,
 		"# personal note left by a human",
@@ -506,3 +506,43 @@ func TestIsManagedLine(t *testing.T) {
 }
 
 const aliceKeyFixture = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID alice@laptop"
+
+func TestRebuildAuthorizedKeys_dropsLegacyHeaderOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// An old file: legacy header at the top and a second stale header left at the
+	// bottom by a previous merge, plus one personal key.
+	existing := strings.Join([]string{
+		"# managed by repomouse — do not edit manually",
+		`command="/usr/local/bin/repomouse shell alice",restrict,no-pty ` + aliceKeyFixture + ` repoMouse:alice`,
+		"",
+		"# managed by repomouse — do not edit manually",
+		`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDpersonal rod@laptop`,
+		"",
+	}, "\n")
+	akPath := filepath.Join(sshDir, "authorized_keys")
+	if err := os.WriteFile(akPath, []byte(existing), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig(t, filepath.Join(home, "repos"))
+	if err := rebuildAuthorizedKeys(cfg, "/usr/local/bin/repomouse"); err != nil {
+		t.Fatalf("rebuildAuthorizedKeys: %v", err)
+	}
+
+	data, err := os.ReadFile(akPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(strings.ToLower(string(data)), "# managed by repomouse"); n != 1 {
+		t.Errorf("header appears %d times, want 1:\n%s", n, data)
+	}
+	if !strings.Contains(string(data), "rod@laptop") {
+		t.Errorf("personal key was dropped:\n%s", data)
+	}
+}
